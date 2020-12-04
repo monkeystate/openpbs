@@ -50,43 +50,53 @@ class TestResvHookEvents(TestFunctional):
     advance_resv_hook_script = """
 import pbs
 e=pbs.event()
+r=e.resv
 
 pbs.logmsg(pbs.LOG_DEBUG, 'Reservation End Hook name - %s' % e.hook_name)
 
 if e.type == pbs.RESV_END:
-    pbs.logmsg(pbs.LOG_DEBUG, 'Reservation ID - %s' % e.resv.resvid)
+    for a in dir(r):
+        logstr = 'end advance resv %s: %s' % (a, (getattr(r, a)))
+        pbs.logmsg(pbs.LOG_DEBUG, logstr)
 """
 
     standing_resv_hook_script = """
 import pbs
 e=pbs.event()
+r=e.resv
 
 pbs.logmsg(pbs.LOG_DEBUG, 'Reservation End Hook name - %s' % e.hook_name)
 
 if e.type == pbs.RESV_END:
-    pbs.logmsg(pbs.LOG_DEBUG, 'Reservation occurrence - %s' %
-    e.resv.reserve_index)
+    for a in dir(r):
+        logstr = 'end standing resv %s: %s' % (a, (getattr(r, a)))
+        pbs.logmsg(pbs.LOG_DEBUG, logstr)
 """
 
     sub_advance_resv_hook_script = """
 import pbs
 e=pbs.event()
+r=e.resv
 
 pbs.logmsg(pbs.LOG_DEBUG, 'Reservation Submit Hook name - %s' % e.hook_name)
 
 if e.type == pbs.RESVSUB:
-    pbs.logmsg(pbs.LOG_DEBUG, 'Reservation submission ID - %s' % e.resv.resvid)
+    for a in dir(r):
+        logstr = 'submit advance resv %s: %s' % (a, (getattr(r, a)))
+        pbs.logmsg(pbs.LOG_DEBUG, logstr)
 """
 
     sub_standing_resv_hook_script = """
 import pbs
 e=pbs.event()
+r=e.resv
 
 pbs.logmsg(pbs.LOG_DEBUG, 'Reservation Submit Hook name - %s' % e.hook_name)
 
 if e.type == pbs.RESVSUB:
-    pbs.logmsg(pbs.LOG_DEBUG, 'Reservation submission occurrence - %s' %
-    e.resv.reserve_index)
+    for a in dir(r):
+        logstr = 'submit standing resv %s: %s' % (a, (getattr(r, a)))
+        pbs.logmsg(pbs.LOG_DEBUG, logstr)
 """
 
     def setUp(self):
