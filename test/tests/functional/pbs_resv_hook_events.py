@@ -47,59 +47,53 @@ class TestResvHookEvents(TestFunctional):
     degraded reservation once the reservation ends or gets deleted.
     """
 
-    end_advance_resv_hook_script = """
+    modifyvnode_hook_script =  """
+import pbs
+e=pbs.event()
+v = e.vnode
+v_o = e.vnode_o
+lsct = v.last_state_change_time
+lsct_o = v_o.last_state_change_time
+state_str_buf_v = ','.join(v.extract_state_strs())
+state_str_buf_v_o = ','.join(v_o.extract_state_strs())
+state_int_buf_v = ','.join([str(_) for _ in v.extract_state_ints()])
+state_int_buf_v_o = ','.join(
+    [str(_) for _ in v_o.extract_state_ints()])
+svs1_data = 'v.state_hex=%s v_o.state_hex=%s v.state_strs=%s ' \
+            'v_o.state_strs=%s' % \
+            (hex(v.state), hex(v_o.state), state_str_buf_v,
+                state_str_buf_v_o)
+svs2_data = 'v.state_ints=%s v_o.state_ints=%s v.lsct=%s ' \
+            'v_o.lsct=%s' % \
+            (state_int_buf_v, state_int_buf_v_o, str(lsct),
+                str(lsct_o))
+svs_data = '%s %s' % (svs1_data, svs2_data)
+pbs.logmsg(pbs.LOG_DEBUG,
+            'show_vnode_state;name=%s %s' % (v.name, svs_data))
+"""
+ 
+    advance_resv_hook_script = """
 import pbs
 e=pbs.event()
 r=e.resv
 
-pbs.logmsg(pbs.LOG_DEBUG, 'Reservation End Hook name - %s' % e.hook_name)
-
-if e.type == pbs.RESV_END:
-    for a in dir(r):
-        logstr = 'end advance resv %s: %s' % (a, (getattr(r, a)))
-        pbs.logmsg(pbs.LOG_DEBUG, logstr)
-    pbs.logmsg(pbs.LOG_DEBUG, 'Reservation ID - %s' % e.resv.resvid)
+pbs.logmsg(pbs.LOG_DEBUG, 'Reservation Hook: name=%s type=%s' % (e.hook_name, hex(e.type)))
+for attr in dir(r):
+    logstr = '%s;advance_resv;%s=%s' % (e.hook_name, attr, (getattr(r, attr)))
+    pbs.logmsg(pbs.LOG_DEBUG, logstr)
+pbs.logmsg(pbs.LOG_DEBUG, 'Reservation ID - %s' % r.resvid)
 """
 
-    end_standing_resv_hook_script = """
+    standing_resv_hook_script = """
 import pbs
 e=pbs.event()
 r=e.resv
 
-pbs.logmsg(pbs.LOG_DEBUG, 'Reservation End Hook name - %s' % e.hook_name)
-
-if e.type == pbs.RESV_END:
-    for a in dir(r):
-        logstr = 'end standing resv %s: %s' % (a, (getattr(r, a)))
-        pbs.logmsg(pbs.LOG_DEBUG, logstr)
-    pbs.logmsg(pbs.LOG_DEBUG, 'Reservation occurrence - %s' %
-    e.resv.reserve_index)
-"""
-
-    sub_advance_resv_hook_script = """
-import pbs
-e=pbs.event()
-r=e.resv
-
-pbs.logmsg(pbs.LOG_DEBUG, 'Reservation Submit Hook name - %s' % e.hook_name)
-
-if e.type == pbs.RESVSUB:
-    for a in dir(r):
-        logstr = 'submit advance resv %s: %s' % (a, (getattr(r, a)))
-        pbs.logmsg(pbs.LOG_DEBUG, logstr)
-"""
-
-    sub_standing_resv_hook_script = """
-import pbs
-e=pbs.event()
-r=e.resv
-
-pbs.logmsg(pbs.LOG_DEBUG, 'Reservation Submit Hook name - %s' % e.hook_name)
-
-if e.type == pbs.RESVSUB:
-    for a in dir(r):
-        logstr = 'submit standing resv %s: %s' % (a, (getattr(r, a)))
-        pbs.logmsg(pbs.LOG_DEBUG, logstr)
+pbs.logmsg(pbs.LOG_DEBUG, 'Reservation Hook: name=%s type=%s' % (e.hook_name, hex(e.type)))
+for attr in dir(r):
+    logstr = '%s;standing_resv;%s=%s' % (e.hook_name, attr, (getattr(r, attr)))
+    pbs.logmsg(pbs.LOG_DEBUG, logstr)
+pbs.logmsg(pbs.LOG_DEBUG, 'Reservation occurrence - %s' % r.reserve_index)
 """
 
     def setUp(self):
@@ -107,12 +101,22 @@ if e.type == pbs.RESVSUB:
         Create a reservation end hook and set the server log level.
         """
         super(TestResvHookEvents, self).setUp()
-        self.hook_end_name = 'resvend_hook'
+        
+        # Add hooks to write interesting debug info to pbs log
+        #
+        # resv hook (define only; imports happen inside tests)
+        self.hook_resvend_name = 'resvend_hook'
         attrs1 = {'event': 'resv_end'}
-        self.server.create_hook(self.hook_end_name, attrs1)
-        self.hook_sub_name = 'resvsub_hook'
+        self.server.create_hook(self.hook_resvend_name, attrs1)
+        self.hook_resvsub_name = 'resvsub_hook'
         attrs2 = {'event': 'resvsub'}
-        self.server.create_hook(self.hook_sub_name, attrs2)
+        self.server.create_hook(self.hook_resvsub_name, attrs2)
+        # modifyvnode hook (define & import)
+        self.hook_modifyvnode_name = 'modifyvnode_hook'
+        attrs3 = {'event': 'modifyvnode'}
+        self.server.create_hook(self.hook_modifyvnode_name, attrs3)
+        self.server.import_hook(self.hook_modifyvnode_name,
+                        TestResvHookEvents.modifyvnode_hook_script)
 
         self.server.manager(MGR_CMD_SET, SERVER, {'log_events': 2047})
 
@@ -149,10 +153,10 @@ if e.type == pbs.RESVSUB:
         Testcase to submit and confirm advance reservation, delete the same
         and verify the resvend hook.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_advance_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                        TestResvHookEvents.sub_advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                        TestResvHookEvents.advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.advance_resv_hook_script)
 
         offset = 10
         duration = 30
@@ -172,10 +176,10 @@ if e.type == pbs.RESVSUB:
         off, delete the degraded reservation and verify the resvend
         hook.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_advance_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                                TestResvHookEvents.sub_advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                                TestResvHookEvents.advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.advance_resv_hook_script)
 
         offset = 10
         duration = 30
@@ -200,10 +204,10 @@ if e.type == pbs.RESVSUB:
         off, turn the server on, delete the reservation and verify the resvend
         hook.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_advance_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                                TestResvHookEvents.sub_advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                                TestResvHookEvents.advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.advance_resv_hook_script)
 
         offset = 10
         duration = 300
@@ -229,10 +233,10 @@ if e.type == pbs.RESVSUB:
         server off, wait for the reservation duration to finish, turn the
         server on and verify the resvend hook.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_advance_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                                TestResvHookEvents.sub_advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                                TestResvHookEvents.advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.advance_resv_hook_script)
 
         offset = 10
         duration = 30
@@ -258,10 +262,10 @@ if e.type == pbs.RESVSUB:
         Testcase to submit and confirm an advance reservation, wait for it
         to end and verify the reservation end hook.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_advance_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                                TestResvHookEvents.sub_advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                                TestResvHookEvents.advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.advance_resv_hook_script)
 
         offset = 10
         duration = 30
@@ -286,10 +290,10 @@ if e.type == pbs.RESVSUB:
         some jobs to the same, wait for the same to end and
         verify the reservation end hook.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_advance_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                                TestResvHookEvents.sub_advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                                TestResvHookEvents.advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.advance_resv_hook_script)
 
         offset = 10
         duration = 30
@@ -325,10 +329,10 @@ if e.type == pbs.RESVSUB:
         some jobs to the same, wait for it to start and end, verify
         the resvend hook.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_advance_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                                TestResvHookEvents.sub_advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                                TestResvHookEvents.advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.advance_resv_hook_script)
 
         offset = 10
         duration = 30
@@ -374,7 +378,7 @@ if e.type == pbs.RESV_END:
     e.resv.resources_used.walltime)
 """
 
-        self.server.import_hook(self.hook_end_name, hook_script)
+        self.server.import_hook(self.hook_resvend_name, hook_script)
 
         offset = 10
         duration = 30
@@ -397,10 +401,10 @@ if e.type == pbs.RESV_END:
         the end hook for the same, delete the second occurrence and
         verify the resvend hook for the latter.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_standing_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                                TestResvHookEvents.sub_standing_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                                TestResvHookEvents.standing_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.standing_resv_hook_script)
 
         offset = 10
         duration = 30
@@ -438,10 +442,10 @@ if e.type == pbs.RESV_END:
         the end hook for the same, wait for the second occurrence to
         start and end, verify the resvend hook for the latter.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_standing_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                                TestResvHookEvents.sub_standing_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                                TestResvHookEvents.standing_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.standing_resv_hook_script)
 
         offset = 10
         duration = 30
@@ -486,10 +490,10 @@ if e.type == pbs.RESV_END:
         delete the second occurrence and verify the resvend hook
         for the latter.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_standing_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                                TestResvHookEvents.sub_standing_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                                TestResvHookEvents.standing_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.standing_resv_hook_script)
 
         offset = 10
         duration = 30
@@ -537,10 +541,10 @@ if e.type == pbs.RESV_END:
         the end hook for the same, wait for the second occurrence to
         end and verify the resvend hook for the latter.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_standing_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                                TestResvHookEvents.sub_standing_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                                TestResvHookEvents.standing_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.standing_resv_hook_script)
 
         offset = 10
         duration = 30
@@ -592,10 +596,10 @@ if e.type == pbs.RESV_END:
         reservation on the same node and verify the reservation end hook
         as the latter one stays in unconfirmed state.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_advance_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                                TestResvHookEvents.sub_advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                                TestResvHookEvents.advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.advance_resv_hook_script)
 
         node_attrs = {'resources_available.ncpus': 1}
         self.server.manager(MGR_CMD_SET, NODE, node_attrs,
@@ -621,10 +625,10 @@ if e.type == pbs.RESV_END:
         the same will be in unconfirmed state and upon ending the
         resvend hook shall not run.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_advance_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                                TestResvHookEvents.sub_advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                                TestResvHookEvents.advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.advance_resv_hook_script)
 
         self.scheduler.stop()
 
@@ -646,10 +650,10 @@ if e.type == pbs.RESV_END:
         the same will be in unconfirmed state and deleting that should
         not run the resvend hook.
         """
-        self.server.import_hook(self.hook_end_name,
-                                TestResvHookEvents.end_advance_resv_hook_script)
-        self.server.import_hook(self.hook_sub_name,
-                                TestResvHookEvents.sub_advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvsub_name,
+                                TestResvHookEvents.advance_resv_hook_script)
+        self.server.import_hook(self.hook_resvend_name,
+                                TestResvHookEvents.advance_resv_hook_script)
 
         self.scheduler.stop()
 
